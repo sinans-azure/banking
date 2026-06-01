@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Azure Banking Portal</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        .header { background-color: #0078D4; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; text-align: center; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { text-align: left; padding: 10px; border-bottom: 1px solid #ddd; }
+        th { background-color: #f8f9fa; }
+        .btn { background-color: #0078D4; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; }
+        .btn:hover { background-color: #005a9e; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
+        .form-group input, .form-group select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        .alert { padding: 15px; margin-bottom: 20px; border-radius: 4px; }
+        .alert-error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .alert-success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .grs-note { background-color: #e7f4fd; border-left: 4px solid #0078D4; padding: 15px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Azure Banking Portal</h1>
+            <p>Demonstrating App Service, PostgreSQL Flexible Server, and Storage Accounts (GRS)</p>
+        </div>
+
+        <script>
+            // Simple script to show success/error from URL params
+            const urlParams = new URLSearchParams(window.location.search);
+            const error = urlParams.get('error');
+            const success = urlParams.get('success');
+            
+            if (error) {
+                document.write(`<div class="alert alert-error">${error}</div>`);
+            }
+            if (success) {
+                document.write(`<div class="alert alert-success">${success}</div>`);
+            }
+        </script>
+
+        <div class="grid">
+            <!-- Left Column: Database Operations -->
+            <div>
+                <div class="card" style="margin-bottom: 20px;">
+                    <h2>Accounts (PostgreSQL)</h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Account Name</th>
+                                <th>Balance ($)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <% if (accounts && accounts.length > 0) { %>
+                                <% accounts.forEach(function(account) { %>
+                                    <tr>
+                                        <td><%= account.id %></td>
+                                        <td><%= account.account_name %></td>
+                                        <td><%= account.balance %></td>
+                                    </tr>
+                                <% }); %>
+                            <% } else { %>
+                                <tr>
+                                    <td colspan="3">No accounts found or database not connected.</td>
+                                </tr>
+                            <% } %>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="card">
+                    <h2>Transfer Funds</h2>
+                    <form action="/transfer" method="POST">
+                        <div class="form-group">
+                            <label>From Account:</label>
+                            <select name="from_id" required>
+                                <% accounts.forEach(function(account) { %>
+                                    <option value="<%= account.id %>"><%= account.account_name %> ($<%= account.balance %>)</option>
+                                <% }); %>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>To Account:</label>
+                            <select name="to_id" required>
+                                <% accounts.forEach(function(account) { %>
+                                    <option value="<%= account.id %>"><%= account.account_name %></option>
+                                <% }); %>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Amount ($):</label>
+                            <input type="number" name="amount" step="0.01" min="0.01" required>
+                        </div>
+                        <button type="submit" class="btn">Execute Transfer</button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Right Column: Storage Operations -->
+            <div>
+                <div class="card" style="margin-bottom: 20px;">
+                    <h2>Document Storage (Azure Blob)</h2>
+                    <p>Upload KYC documents, statements, etc. These files are stored in an Azure Storage Account configured with GRS (Geo-Redundant Storage) for regional fault tolerance.</p>
+                    
+                    <form action="/upload" method="POST" enctype="multipart/form-data">
+                        <div class="form-group">
+                            <input type="file" name="document" required>
+                        </div>
+                        <button type="submit" class="btn">Upload Document</button>
+                    </form>
+                </div>
+
+                <div class="card">
+                    <h2>Stored Documents</h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Document Name</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <% if (documents && documents.length > 0) { %>
+                                <% documents.forEach(function(doc) { %>
+                                    <tr>
+                                        <td><span style="word-break: break-all; font-size: 0.9em;"><%= doc.name %></span></td>
+                                        <td><a href="<%= doc.url %>" target="_blank" class="btn" style="text-decoration: none; font-size: 0.8em; padding: 5px 10px;">View</a></td>
+                                    </tr>
+                                <% }); %>
+                            <% } else { %>
+                                <tr>
+                                    <td colspan="2">No documents found or storage not connected.</td>
+                                </tr>
+                            <% } %>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="grs-note">
+                    <h3>About GRS (Geo-Redundant Storage)</h3>
+                    <p>By using a GRS-enabled Storage Account for these documents, Azure automatically replicates your data to a secondary region hundreds of miles away from the primary region.</p>
+                    <p>If the primary region suffers an outage, Azure handles the failover automatically, ensuring your banking documents remain safe and accessible.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
