@@ -10,23 +10,27 @@ const blobStorage = require('./blob');
 const app = express();
 const port = process.env.PORT || 8080;
 const sessionSecret = process.env.SESSION_SECRET || 'azure-banking-super-secret';
+const isProduction = process.env.NODE_ENV === 'production';
 
 // Configure multer for memory storage
 const upload = multer({ storage: multer.memoryStorage() });
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
+app.set('trust proxy', 1);
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(session({
   secret: sessionSecret,
   resave: false,
-  saveUninitialized: false
+  saveUninitialized: false,
+  proxy: true,
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: isProduction
+  }
 }));
-
-// Initialize DB and Storage
-db.initDB();
-blobStorage.initBlobStorage();
 
 const requireAuth = (req, res, next) => {
   if (!req.session.userId) {
@@ -106,8 +110,14 @@ app.get('/login', (req, res) => {
 });
 
 app.post('/login', async (req, res) => {
-  const { username, password } = req.body;
+  const username = (req.body.username || '').trim();
+  const password = req.body.password || '';
+
   try {
+    if (!username || !password) {
+      throw new Error('Username and password are required');
+    }
+
     const userRes = await db.query('SELECT * FROM users WHERE username = $1', [username]);
     if (userRes.rows.length === 0) throw new Error('Invalid credentials');
     
@@ -118,7 +128,8 @@ app.post('/login', async (req, res) => {
     req.session.userId = user.id;
     res.redirect('/');
   } catch (error) {
-    res.redirect(`/login?error=${error.message}`);
+    console.error('Login failed:', error.message);
+    res.redirect(`/login?error=${encodeURIComponent(error.message)}`);
   }
 });
 
@@ -127,18 +138,42 @@ app.get('/register', (req, res) => {
 });
 
 app.post('/register', async (req, res) => {
-  const { username, password } = req.body;
+  const username = (req.body.username || '').trim();
+  const password = req.body.password || '';
+  let transactionStarted = false;
+
   try {
+    if (!username || !password) {
+      throw new Error('Username and password are required');
+    }
+    if (password.length < 6) {
+      throw new Error('Password must be at least 6 characters');
+    }
+
+    await db.query('BEGIN');
+    transactionStarted = true;
+
     const hashed = await bcrypt.hash(password, 10);
     const newRes = await db.query('INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id', [username, hashed]);
     const newUserId = newRes.rows[0].id;
     
     // Give them a default account
     await db.query('INSERT INTO accounts (user_id, account_name, balance) VALUES ($1, $2, $3)', [newUserId, 'Main Checking', 1000.00]);
+
+    await db.query('COMMIT');
     
     res.redirect('/login?success=Registration successful! Please log in.');
   } catch (error) {
-    res.redirect(`/register?error=Registration failed. Username might be taken.`);
+    if (transactionStarted) {
+      await db.query('ROLLBACK');
+    }
+
+    const message = error.code === '23505'
+      ? 'Registration failed. Username already exists.'
+      : error.message;
+
+    console.error('Registration failed:', error.message);
+    res.redirect(`/register?error=${encodeURIComponent(message)}`);
   }
 });
 
@@ -311,6 +346,16 @@ app.post('/api/ocr-result', async (req, res) => {
   }
 });
 
-app.listen(port, () => {
-  console.log(`Banking App listening at http://localhost:${port}`);
+const start = async () => {
+  await db.initDB();
+  await blobStorage.initBlobStorage();
+
+  app.listen(port, () => {
+    console.log(`Banking App listening at http://localhost:${port}`);
+  });
+};
+
+start().catch((error) => {
+  console.error('Failed to start Banking App:', error);
+  process.exit(1);
 });
