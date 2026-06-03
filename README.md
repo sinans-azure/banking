@@ -6,7 +6,8 @@ A simple Node.js web application to demonstrate integrating Azure App Service wi
 - **User Login and Registration**: Each user has their own banking session, account, and uploaded documents.
 - **PostgreSQL Database Integration**: Simulates a banking system with accounts and simple fund transfers.
 - **Azure Blob Storage Integration**: Upload and view user-scoped documents, demonstrating file storage capabilities using Azure Storage.
-- **Azure Functions OCR Integration**: Sends uploaded documents to an Azure Function App to extract an age and calculate an insurance premium.
+- **Azure Functions OCR Integration**: A Blob-trigger Function extracts an age and calculates an insurance premium after upload.
+- **Service Bus Email Notifications**: Queues OCR result email notifications for a Service Bus-trigger Function to send through Gmail.
 - **GRS Demonstration**: The uploaded documents are stored in an Azure Storage Account. If configured with GRS, Azure automatically replicates the documents to a secondary region.
 
 ## Prerequisites
@@ -16,6 +17,7 @@ To run this locally or in Azure, you need:
 - An Azure PostgreSQL Flexible Server instance
 - An Azure Storage Account (configured with GRS for the demo)
 - Optional: An Azure Function App and Azure AI Vision/Document Intelligence resource for OCR
+- Optional: Azure Service Bus queue and Gmail App Password for OCR result emails
 
 ## Local Setup
 
@@ -42,9 +44,9 @@ To run this locally or in Azure, you need:
    - `AZURE_STORAGE_CONNECTION_STRING`: Your Storage Account connection string
    - `AZURE_STORAGE_CONTAINER_NAME`: The blob container to store documents (defaults to `documents`)
    - `SESSION_SECRET`: A long random value used to secure login sessions
-   - `OCR_FUNCTION_URL`: Optional HTTP-trigger Function URL for immediate OCR processing
-   - `OCR_FUNCTION_KEY`: Optional Function key if the HTTP trigger requires one
-   - `OCR_WEBHOOK_SECRET`: Optional shared secret required for Blob-trigger callbacks to `/api/ocr-result`
+   - `OCR_WEBHOOK_SECRET`: Optional shared secret required for OCR callbacks to `/api/ocr-result`
+   - `SERVICE_BUS_CONNECTION_STRING`: Optional Service Bus connection string for email notifications
+   - `SERVICE_BUS_EMAIL_QUEUE_NAME`: Optional queue name, defaults to `ocr-email-notifications`
 
 5. Run the application:
    ```bash
@@ -64,17 +66,20 @@ To run this locally or in Azure, you need:
    - `AZURE_STORAGE_CONNECTION_STRING`
    - `AZURE_STORAGE_CONTAINER_NAME`
    - `SESSION_SECRET`
-   - `OCR_FUNCTION_URL` (optional)
-   - `OCR_FUNCTION_KEY` (optional)
    - `OCR_WEBHOOK_SECRET` (optional)
+   - `SERVICE_BUS_CONNECTION_STRING` (optional)
+   - `SERVICE_BUS_EMAIL_QUEUE_NAME` (optional)
 
 The App Service will automatically run `npm install` and start the app using `npm start` (which runs `node app.js`).
 
-## OCR Flow Options
+## OCR Flow
 
-This app supports two Azure Function patterns:
-
-1. **HTTP Trigger**: Set `OCR_FUNCTION_URL`. After upload, the app sends `{ documentId, userId, documentName, documentUrl, callbackUrl }` to the Function. If the Function returns JSON like `{ "age": 42, "premium": 100 }`, the dashboard updates immediately.
-2. **Blob Trigger**: Leave `OCR_FUNCTION_URL` empty. The uploaded blob starts in `Pending Validation`, and your Blob-trigger Function should call `/api/ocr-result` with `{ "documentId": 1, "age": 42, "premium": 100, "status": "Processed" }`.
+This app uses a Blob-trigger Azure Function. The uploaded document starts in `Pending Validation`, and the Blob-trigger Function should call `/api/ocr-result` with `{ "blob_url": "<uploaded-blob-url>", "age": 42, "premium": 100, "status": "Processed" }`.
 
 See `FUNCTION_APP_SETUP.md` for the Azure Portal setup steps.
+
+## Email Notification Flow
+
+New users register with a Gmail address. When OCR processing finishes, the banking app sends a JSON message to the configured Service Bus queue. A separate Service Bus-trigger Azure Function should consume that message and send the email through Gmail using a Gmail App Password.
+
+The banking app only publishes the message; Gmail credentials belong in the email-sending Function App, not in this web app.

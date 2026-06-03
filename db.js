@@ -17,6 +17,7 @@ const initDB = async () => {
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         username VARCHAR(100) UNIQUE NOT NULL,
+        email VARCHAR(255),
         password VARCHAR(255) NOT NULL
       );
 
@@ -34,7 +35,8 @@ const initDB = async () => {
         blob_url TEXT,
         status VARCHAR(50) DEFAULT 'Pending',
         extracted_age INTEGER,
-        insurance_premium DECIMAL(10, 2)
+        insurance_premium DECIMAL(10, 2),
+        email_queued_at TIMESTAMPTZ
       );
     `);
     
@@ -45,9 +47,11 @@ const initDB = async () => {
       // Column might already exist or table doesn't have it, ignore
     }
 
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(255)');
     await pool.query('ALTER TABLE documents ADD COLUMN IF NOT EXISTS extracted_age INTEGER');
     await pool.query('ALTER TABLE documents ADD COLUMN IF NOT EXISTS insurance_premium DECIMAL(10, 2)');
     await pool.query('ALTER TABLE documents ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT \'Pending\'');
+    await pool.query('ALTER TABLE documents ADD COLUMN IF NOT EXISTS email_queued_at TIMESTAMPTZ');
     console.log('Database initialized successfully');
   } catch (error) {
     console.error('Error initializing database:', error);

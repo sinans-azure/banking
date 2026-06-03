@@ -39,21 +39,7 @@ const uploadDocument = async (originalname, buffer, userId) => {
   return blockBlobClient.url;
 };
 
-const listDocuments = async () => {
-  if (!containerClient) return [];
-  const documents = [];
-  for await (const blob of containerClient.listBlobsFlat()) {
-    documents.push({
-      name: blob.name,
-      createdOn: blob.properties.createdOn,
-      url: containerClient.getBlockBlobClient(blob.name).url
-    });
-  }
-  return documents;
-};
-
 module.exports = {
   initBlobStorage,
-  uploadDocument,
-  listDocuments
+  uploadDocument
 };

@@ -6,6 +6,7 @@ const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const db = require('./db');
 const blobStorage = require('./blob');
+const mailQueue = require('./mailQueue');
 
 const app = express();
 const port = process.env.PORT || 8080;
@@ -39,11 +40,6 @@ const requireAuth = (req, res, next) => {
   next();
 };
 
-const buildAbsoluteUrl = (req, pathName) => {
-  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-  return `${protocol}://${req.get('host')}${pathName}`;
-};
-
 const normalizeOcrResult = (payload) => ({
   extractedAge: payload.extractedAge ?? payload.extracted_age ?? payload.age ?? null,
   insurancePremium: payload.insurancePremium ?? payload.insurance_premium ?? payload.premium ?? null,
@@ -72,36 +68,44 @@ const updateDocumentOcrResult = async ({ documentId, blobUrl, status, extractedA
   return result.rowCount;
 };
 
-const callOcrFunction = async (req, document) => {
-  if (!process.env.OCR_FUNCTION_URL) return null;
+const queueOcrEmailNotification = async (documentId) => {
+  const result = await db.query(
+    `SELECT
+       d.id,
+       d.document_name,
+       d.status,
+       d.extracted_age,
+       d.insurance_premium,
+       d.email_queued_at,
+       u.username,
+       u.email
+     FROM documents d
+     JOIN users u ON u.id = d.user_id
+     WHERE d.id = $1`,
+    [documentId]
+  );
 
-  const headers = { 'Content-Type': 'application/json' };
-  if (process.env.OCR_FUNCTION_KEY) {
-    headers['x-functions-key'] = process.env.OCR_FUNCTION_KEY;
+  if (result.rows.length === 0) return false;
+
+  const document = result.rows[0];
+  if (document.email_queued_at || document.status === 'Processing' || document.status === 'Pending Validation') {
+    return false;
   }
 
-  const response = await fetch(process.env.OCR_FUNCTION_URL, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      documentId: document.id,
-      userId: document.user_id,
-      documentName: document.document_name,
-      documentUrl: document.blob_url,
-      callbackUrl: buildAbsoluteUrl(req, '/api/ocr-result')
-    })
+  const queued = await mailQueue.enqueueOcrEmail({
+    email: document.email,
+    username: document.username,
+    documentName: document.document_name,
+    status: document.status,
+    extractedAge: document.extracted_age,
+    insurancePremium: document.insurance_premium
   });
 
-  if (!response.ok) {
-    throw new Error(`OCR Function returned ${response.status}`);
+  if (queued) {
+    await db.query('UPDATE documents SET email_queued_at = NOW() WHERE id = $1', [document.id]);
   }
 
-  const contentType = response.headers.get('content-type') || '';
-  if (!contentType.includes('application/json')) {
-    return null;
-  }
-
-  return normalizeOcrResult(await response.json());
+  return queued;
 };
 
 // Auth Routes
@@ -139,12 +143,16 @@ app.get('/register', (req, res) => {
 
 app.post('/register', async (req, res) => {
   const username = (req.body.username || '').trim();
+  const email = (req.body.email || '').trim().toLowerCase();
   const password = req.body.password || '';
   let transactionStarted = false;
 
   try {
-    if (!username || !password) {
-      throw new Error('Username and password are required');
+    if (!username || !email || !password) {
+      throw new Error('Username, email, and password are required');
+    }
+    if (!email.endsWith('@gmail.com')) {
+      throw new Error('Please use a Gmail address for email notifications');
     }
     if (password.length < 6) {
       throw new Error('Password must be at least 6 characters');
@@ -154,7 +162,10 @@ app.post('/register', async (req, res) => {
     transactionStarted = true;
 
     const hashed = await bcrypt.hash(password, 10);
-    const newRes = await db.query('INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id', [username, hashed]);
+    const newRes = await db.query(
+      'INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING id',
+      [username, email, hashed]
+    );
     const newUserId = newRes.rows[0].id;
     
     // Give them a default account
@@ -272,36 +283,10 @@ app.post('/upload', requireAuth, upload.single('document'), async (req, res) => 
     const blobUrl = await blobStorage.uploadDocument(req.file.originalname, req.file.buffer, userId);
     
     // Save document record to DB
-    const documentResult = await db.query(
+    await db.query(
       'INSERT INTO documents (user_id, document_name, blob_url, status) VALUES ($1, $2, $3, $4) RETURNING *',
-      [userId, req.file.originalname, blobUrl, process.env.OCR_FUNCTION_URL ? 'Processing' : 'Pending Validation']
+      [userId, req.file.originalname, blobUrl, 'Pending Validation']
     );
-
-    const document = documentResult.rows[0];
-
-    if (process.env.OCR_FUNCTION_URL) {
-      try {
-        const ocrResult = await callOcrFunction(req, document);
-        if (ocrResult) {
-          await updateDocumentOcrResult({
-            documentId: document.id,
-            status: ocrResult.status,
-            extractedAge: ocrResult.extractedAge,
-            insurancePremium: ocrResult.insurancePremium
-          });
-          return res.redirect('/?success=Document uploaded and insurance quote calculated.');
-        }
-
-        return res.redirect('/?success=Document uploaded. OCR Function accepted the request.');
-      } catch (ocrError) {
-        console.error('OCR Function Error:', ocrError);
-        await db.query(
-          'UPDATE documents SET status = $1 WHERE id = $2',
-          ['OCR Failed', document.id]
-        );
-        return res.redirect(`/?error=Document uploaded, but OCR failed: ${ocrError.message}`);
-      }
-    }
 
     res.redirect('/?success=Document uploaded successfully. OCR processing will begin shortly.');
   } catch (error) {
@@ -320,7 +305,7 @@ app.post('/api/ocr-result', async (req, res) => {
 
   const result = normalizeOcrResult(req.body);
   const documentId = req.body.documentId || req.body.document_id;
-  const blobUrl = req.body.blob_url || req.body.blobUrl || req.body.documentUrl;
+  const blobUrl = req.body.blob_url || req.body.blobUrl;
 
   try {
     if (!documentId && !blobUrl) {
@@ -339,7 +324,10 @@ app.post('/api/ocr-result', async (req, res) => {
       return res.status(404).json({ error: 'Document not found' });
     }
 
-    res.status(200).json({ success: true });
+    const resolvedDocumentId = documentId || (await db.query('SELECT id FROM documents WHERE blob_url = $1', [blobUrl])).rows[0]?.id;
+    const emailQueued = resolvedDocumentId ? await queueOcrEmailNotification(resolvedDocumentId) : false;
+
+    res.status(200).json({ success: true, emailQueued });
   } catch (error) {
     console.error('OCR Webhook Error:', error);
     res.status(500).json({ error: error.message });
@@ -349,6 +337,7 @@ app.post('/api/ocr-result', async (req, res) => {
 const start = async () => {
   await db.initDB();
   await blobStorage.initBlobStorage();
+  mailQueue.initMailQueue();
 
   app.listen(port, () => {
     console.log(`Banking App listening at http://localhost:${port}`);
