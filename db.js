@@ -14,22 +14,40 @@ const pool = new Pool({
 const initDB = async () => {
   try {
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(100) UNIQUE NOT NULL,
+        password VARCHAR(255) NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS accounts (
         id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         account_name VARCHAR(100) NOT NULL,
         balance DECIMAL(10, 2) DEFAULT 0.00
       );
+
+      CREATE TABLE IF NOT EXISTS documents (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
+        document_name VARCHAR(255) NOT NULL,
+        blob_url TEXT,
+        status VARCHAR(50) DEFAULT 'Pending',
+        extracted_age INTEGER,
+        insurance_premium DECIMAL(10, 2)
+      );
     `);
     
-    // Seed data if empty
-    const res = await pool.query('SELECT COUNT(*) FROM accounts');
-    if (parseInt(res.rows[0].count) === 0) {
-      await pool.query(`
-        INSERT INTO accounts (account_name, balance) VALUES 
-        ('Alice Savings', 1500.50),
-        ('Bob Checking', 250.00)
-      `);
+    // Check if we need to add user_id to accounts (if it was created previously)
+    try {
+      await pool.query('ALTER TABLE accounts ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)');
+    } catch (e) {
+      // Column might already exist or table doesn't have it, ignore
     }
+
+    await pool.query('ALTER TABLE documents ADD COLUMN IF NOT EXISTS extracted_age INTEGER');
+    await pool.query('ALTER TABLE documents ADD COLUMN IF NOT EXISTS insurance_premium DECIMAL(10, 2)');
+    await pool.query('ALTER TABLE documents ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT \'Pending\'');
     console.log('Database initialized successfully');
   } catch (error) {
     console.error('Error initializing database:', error);

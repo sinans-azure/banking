@@ -25,25 +25,27 @@
     </style>
 </head>
 <body>
+    <style>
+        .logout-btn { float: right; background-color: #f44336; padding: 8px 12px; margin-top: -45px; border-radius: 4px; color: white; text-decoration: none; font-size: 14px; }
+        .logout-btn:hover { background-color: #d32f2f; }
+        .status-badge { padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+        .status-pending { background-color: #fff3cd; color: #856404; }
+        .status-processed { background-color: #d4edda; color: #155724; }
+        .status-failed { background-color: #f8d7da; color: #721c24; }
+    </style>
     <div class="container">
         <div class="header">
             <h1>Azure Banking Portal</h1>
-            <p>Demonstrating App Service, PostgreSQL Flexible Server, and Storage Accounts (GRS)</p>
+            <p>Welcome, <%= username %>! Demonstrating App Service, PostgreSQL, Storage, and Azure Functions.</p>
+            <a href="/logout" class="logout-btn">Logout</a>
         </div>
 
-        <script>
-            // Simple script to show success/error from URL params
-            const urlParams = new URLSearchParams(window.location.search);
-            const error = urlParams.get('error');
-            const success = urlParams.get('success');
-            
-            if (error) {
-                document.write(`<div class="alert alert-error">${error}</div>`);
-            }
-            if (success) {
-                document.write(`<div class="alert alert-success">${success}</div>`);
-            }
-        </script>
+        <% if (locals.error) { %>
+            <div class="alert alert-error"><%= error %></div>
+        <% } %>
+        <% if (locals.success) { %>
+            <div class="alert alert-success"><%= success %></div>
+        <% } %>
 
         <div class="grid">
             <!-- Left Column: Database Operations -->
@@ -90,7 +92,7 @@
                         <div class="form-group">
                             <label>To Account:</label>
                             <select name="to_id" required>
-                                <% accounts.forEach(function(account) { %>
+                                <% allAccounts.forEach(function(account) { %>
                                     <option value="<%= account.id %>"><%= account.account_name %></option>
                                 <% }); %>
                             </select>
@@ -119,11 +121,14 @@
                 </div>
 
                 <div class="card">
-                    <h2>Stored Documents</h2>
+                    <h2>Stored Documents & Insurance Quote</h2>
                     <table>
                         <thead>
                             <tr>
                                 <th>Document Name</th>
+                                <th>Status</th>
+                                <th>Age</th>
+                                <th>Premium</th>
                                 <th>Action</th>
                             </tr>
                         </thead>
@@ -131,13 +136,32 @@
                             <% if (documents && documents.length > 0) { %>
                                 <% documents.forEach(function(doc) { %>
                                     <tr>
-                                        <td><span style="word-break: break-all; font-size: 0.9em;"><%= doc.name %></span></td>
-                                        <td><a href="<%= doc.url %>" target="_blank" class="btn" style="text-decoration: none; font-size: 0.8em; padding: 5px 10px;">View</a></td>
+                                        <td><span style="word-break: break-all; font-size: 0.9em;"><%= doc.document_name %></span></td>
+                                        <td>
+                                            <span class="status-badge <%= doc.status === 'Processed' ? 'status-processed' : (doc.status && doc.status.includes('Failed') ? 'status-failed' : 'status-pending') %>">
+                                                <%= doc.status %>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <% if (doc.extracted_age !== null && doc.extracted_age !== undefined) { %>
+                                                <%= doc.extracted_age %>
+                                            <% } else { %>
+                                                -
+                                            <% } %>
+                                        </td>
+                                        <td>
+                                            <% if (doc.insurance_premium !== null && doc.insurance_premium !== undefined) { %>
+                                                $<%= doc.insurance_premium %>/mo
+                                            <% } else { %>
+                                                -
+                                            <% } %>
+                                        </td>
+                                        <td><a href="<%= doc.blob_url %>" target="_blank" class="btn" style="text-decoration: none; font-size: 0.8em; padding: 5px 10px;">View</a></td>
                                     </tr>
                                 <% }); %>
                             <% } else { %>
                                 <tr>
-                                    <td colspan="2">No documents found or storage not connected.</td>
+                                    <td colspan="5">No documents found. Upload a document to get an insurance quote via Azure Functions OCR.</td>
                                 </tr>
                             <% } %>
                         </tbody>
@@ -145,9 +169,9 @@
                 </div>
                 
                 <div class="grs-note">
-                    <h3>About GRS (Geo-Redundant Storage)</h3>
-                    <p>By using a GRS-enabled Storage Account for these documents, Azure automatically replicates your data to a secondary region hundreds of miles away from the primary region.</p>
-                    <p>If the primary region suffers an outage, Azure handles the failover automatically, ensuring your banking documents remain safe and accessible.</p>
+                    <h3>About Azure Functions & OCR</h3>
+                    <p>When you upload a document, it triggers an Azure Function that processes the file using Azure AI Vision (OCR).</p>
+                    <p>It reads your age from the document and calculates a customized insurance premium, which is then updated here automatically!</p>
                 </div>
             </div>
         </div>

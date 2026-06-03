@@ -28,11 +28,14 @@ const initBlobStorage = async () => {
   }
 };
 
-const uploadDocument = async (originalname, buffer) => {
+const uploadDocument = async (originalname, buffer, userId) => {
   if (!containerClient) throw new Error('Storage not configured');
-  const blobName = `${Date.now()}-${originalname}`;
+  const safeName = originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const blobName = userId ? `user-${userId}/${Date.now()}-${safeName}` : `${Date.now()}-${safeName}`;
   const blockBlobClient = containerClient.getBlockBlobClient(blobName);
-  await blockBlobClient.uploadData(buffer);
+  await blockBlobClient.uploadData(buffer, {
+    metadata: userId ? { userId: String(userId), originalName: safeName } : { originalName: safeName }
+  });
   return blockBlobClient.url;
 };
 
